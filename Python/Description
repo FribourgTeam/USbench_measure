@@ -1,0 +1,3 @@
+Code tested and implemented for python 3.10 and above
+Install using
+install -r requirements.txt -all
