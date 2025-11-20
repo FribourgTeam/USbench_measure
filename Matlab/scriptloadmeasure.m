@@ -1,0 +1,202 @@
+%script to load all wave forms
+clear
+%test to perform
+%online record test close and far -> measure time difference trigger and
+%wave start
+%
+Script_rename_measuretxt
+
+scanfile1 = dir('scan_*.txt');
+scanfile2 = dir('scan_*.mat');
+display(['Opening scan coordinates: ' scanfile2(1).name])
+load(scanfile2(1).name)
+%coord = importmeasure(scanfile1(1).name,3,'\t',1);
+
+dtrig = [];
+maxV = [];
+
+ffiles = dir('mes_*.txt');
+figure
+coord = coord(1:size(ffiles,1),:);
+flagscale = 0;
+flagzerotext = 0;
+Sens = 0.12*1e-6;%V/Pa
+for ff = 1:size(ffiles,1)
+    %get single files
+
+    m = importmeasure(ffiles(ff).name,2,[],2);
+    if sum(m(:,2))>0
+        signal = m(:,1)-mean(m(:,1));
+        %get time to trigger
+        trig = m(:,2)>1;
+        trigidx = find(trig);
+        trig0 = trigidx(1);%find(trig(2:end)>trig(1:end-1));
+        trigend = trigidx(end);%
+
+        %get pretrigger baseline noise
+        meannoise = mean(signal(trig==0,1));
+        maxnoise = max(abs(signal(trig==0,1)));
+        [yupper,ylower] = envelope(signal(:,1));
+        yupper = movmean(yupper,10);
+        %find first crossing
+        idxstart = find(abs(signal(:,1))>maxnoise);
+        if ~isempty(idxstart)
+            idxstart = idxstart(1);
+        else
+            idxstart = 0;
+        end
+
+        %get the max at mid enveloppe (to ignore some end pulse spikes)
+        idxabove = find(trig==1);
+        idxabovestart = idxabove(1);
+        idxabovestop = idxabove(round(length(idxabove)/2));
+        %maxV(ff) = max(m(idxabovestart:idxabovestop,1));
+
+        %get very first wave
+        if 1==1 %flagscale == 0
+            [pks,locs] = findpeaks((signal),'MinPeakHeight',maxnoise,'MinPeakDistance',5);
+            %transducer at 250lHz
+            periodtime = 4.0000e-06;%sec
+            periodtics =mode(diff(locs));
+            if isempty(locs)
+                tmscale = 3.8462e-6;
+                locs = trig0;
+            else
+                tmscale = periodtime/periodtics;
+                flagscale = 1;
+            end
+        end
+
+
+        %tmscale = 3.8462e-3;
+        timesc = ([1:length(signal)]-trig0)*tmscale;
+        oplot = 0;
+        if oplot == 1
+
+            plot(timesc,signal(:,1)),hold on, plot(timesc,yupper),
+            plot(timesc,trig*0.1)
+            line((locs(1)-trig0)*[1 1]*tmscale,[0, max(signal(:,1))])
+            line((idxstart-trig0)*[1 1]*tmscale,[0, max(signal(:,1))])
+            line(0*[1 1]*tmscale,[0, max(m(:,1))])
+            hold off
+            ylim([-0.3 0.3])
+            drawnow
+            %pause(0.1)
+        end
+
+        %time shift
+        dtrig(ff) = (idxstart-trig0)*tmscale;%(locs(1)-trig0)*tmscale;
+        %locs = [];
+        %max voltage within pulse
+        maxV(ff) = max(abs(signal(trig0:trigend)));
+        %
+        dt = tmscale;
+        pulse = 2.667*signal(trig0:trigend)/Sens;%pulse in Pa
+        PPSI = sum(pulse.^2) * dt;%integrate Pressure  Pa2 x s
+        cPPSI = cumsum(pulse.^2)*dt;%cumulative integral
+        %td = 1.25*(t90 - t10)
+        
+        if ~isnan(cPPSI)
+            t90 = find(cPPSI>0.9*PPSI);
+            t10 = find(cPPSI>0.1*PPSI);
+            td = 1.25*(t90(1)-t10(1))*tmscale;
+            %td = PPSI / max(abs(pulse))^2;%s
+            %td = 5e-3;
+            rho = 1000;   %kg/m³
+            c = 1500;      % m/s
+            I = pulse.^2 / (rho * c);  % instantaneous intensity (W/m²)
+            PII = sum(I) * dt;     % Pulse Intensity Integral (W·s/m²)
+            Isppa(ff) = (1e-4)*PII/td; %W/m2 (or x 0.1 to convert in mW/cm2)
+        else
+            Isppa(ff) = NaN;
+        end
+    else
+        flagzerotext = flagzerotext +1 ;
+    end
+end
+
+%conversion to
+%Mpa
+%I (W/cm2
+%Corrected hydrophone Sensitivity (V/MPa) vs. Frequency (MHz) for system comprising preamplifier SN: HP33901 ,
+%DC Coupler SN: DCPS0638 , 0.5 mm Needle hydrophone SN: 4262 and attenuator: A529
+%Sens = 10;%mV/Mpa
+Sens = 0.12*1e-6;%V/Pa
+Speedsound = 1480;%m/s
+WatDense = 1000;%kg/m3
+%pc = kg/m2xs
+%num = (V/Mpa)2 = V2/(N2/mm4) =V2/(kg2m2/s4mm4) = mV2/(kg2/s4mm4)
+%num/den = mV2 /(kg2/s4mm4) / (kg/m2xs) = mV2 /(kg2/s4mm4)
+%1 MPa = 10,1 kg/cm²
+%1 N = 1kgm/s²
+
+dP = maxV/Sens;
+I1 = 1e-4*(dP.^2)/(rho*c);%W/cm2
+idxI = find(I1>3);
+I2 = I1;
+I2(idxI) = 0;
+
+dist = 1e3*dtrig*Speedsound;
+
+figure,
+subplot(3,1,1),plot(coord(:,1),dP),ylabel('max Pa')
+subplot(3,1,2),plot(coord(:,1),Isppa),ylabel('I W/cm2')
+subplot(3,1,3),plot(coord(:,1),dist),ylabel('distance to transducer (mm)')
+
+save('power.mat','dP','Isppa','I1',"coord","coordi")
+%trans
+A = [];
+B = [];
+for fi = 1:length(Isppa)
+    A(coordi(fi,1),coordi(fi,2),coordi(fi,3)) = Isppa(fi);
+    B(coordi(fi,1),coordi(fi,2),coordi(fi,3)) = dP(fi);
+end
+
+%scatter of each intensity in color
+figure, scatter3(coord(:,1),coord(:,2),coord(:,3),20,Isppa,'filled')
+figure, scatter3(coord(:,1),coord(:,2),coord(:,3),20,dist,'filled')
+
+%patch method
+[x,y,z] = meshgrid(x_vals,y_vals,z_vals);
+%[x,y,z] = ndgrid(x_vals,y_vals,z_vals);
+AA = permute(A,[2 1 3]);
+%need to process volume for missing data
+AA(isnan(AA)) = 0;
+
+figure, view(3)
+hSlice = slice(x,y,z,AA,-5,0,0);
+set(hSlice,'EdgeColor','none','FaceColor','interp')
+
+[ff] = isosurface(x,y,z,AA);
+hiso1 = patch(ff);
+set(hiso1,'CData',1.0,'Facecolor','flat','EdgeColor','none')
+hiso2 = patch(ff);
+set(hiso2,'CData',0.1,'Facecolor','flat','EdgeColor','none')
+
+%plot contour slice with levels
+lvls = min(AA(:)):0.05:max(AA(:));
+%rings
+figure,hSlice = contourslice(x,y,z,AA,-1*[5:5:50],[],[],lvls,'nearest');view(3)
+
+
+%line scatter for each (x,z) pairs
+figure, hold on,
+for y1 = y_vals
+    for z1 = z_vals
+        idxline = find(coord(:,2)==y1&coord(:,3)==z1);
+        Ix = Isppa(idxline)/max(Isppa);
+        Xx = coord(idxline,1);
+        plot3(Xx,y1*ones(1,length(Xx)),z1*ones(1,length(Xx))+Ix*5)
+    end
+end
+
+
+%plot one line
+idxline = find(coord(:,2)==5&coord(:,3)==5);
+Ix = dist(idxline)/max(Isppa);
+Xx = coord(idxline,1);
+plot(Xx,Ix)
+
+
+%visualize 3D beam
+viewer = viewer3d;
